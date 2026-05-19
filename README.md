@@ -2,6 +2,8 @@
 
 AI-powered call recording analysis service using OpenAI Whisper and GPT-4.
 
+**Status**: Deploying to Render
+
 ## 🚀 Quick Deploy to Render
 
 ### Option 1: One-Click Deploy (Recommended)
