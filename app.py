@@ -1,4 +1,7 @@
-"""FastAPI application for audio analysis deployment on Render."""
+"""FastAPI application for audio analysis deployment on Render.
+
+Version: 2.0 - Improved response formatting
+"""
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse
 import shutil
