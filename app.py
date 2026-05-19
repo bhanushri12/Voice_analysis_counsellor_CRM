@@ -170,7 +170,59 @@ async def analyze_audio_file(file: UploadFile = File(...)):
                 raise HTTPException(status_code=502, detail="Analysis failed")
             
             logger.info("Analysis complete")
-            return {"status": "success", "data": result}
+            
+            # Format response in a clean, readable structure
+            response = {
+                "status": "success",
+                "call_analysis": {
+                    "disposition": result.get("disposition"),
+                    "interest_level": result.get("interest_level"),
+                    "sentiment": result.get("sentiment"),
+                    "sentiment_score": result.get("sentiment_score"),
+                    "summary": result.get("summary")
+                },
+                "conversation": {
+                    "transcript": result.get("transcript", [])
+                },
+                "recommendations": {
+                    "stage": {
+                        "current": result.get("ai_recommendations", {}).get("stage_update", {}).get("current_stage", ""),
+                        "recommended": result.get("ai_recommendations", {}).get("stage_update", {}).get("recommended_stage", ""),
+                        "sub_stage": result.get("ai_recommendations", {}).get("stage_update", {}).get("recommended_sub_stage", "")
+                    },
+                    "follow_up": result.get("ai_recommendations", {}).get("follow_up", {}),
+                },
+                "extracted_information": {
+                    "contact": {
+                        k: v for k, v in result.get("ai_recommendations", {}).get("auto_fill", {}).get("form_fields", {}).items()
+                        if k in ["phone", "mobile_number", "alternate_mobile_number", "email", "alternate_email"] and v
+                    },
+                    "personal": {
+                        k: v for k, v in result.get("ai_recommendations", {}).get("auto_fill", {}).get("form_fields", {}).items()
+                        if k in ["city", "first_line_add", "best_time_to_call"] and v
+                    },
+                    "education": {
+                        k: v for k, v in result.get("ai_recommendations", {}).get("auto_fill", {}).get("form_fields", {}).items()
+                        if k in ["qualification", "degree", "field_of_study", "institute_school", "course"] and v
+                    },
+                    "professional": {
+                        k: v for k, v in result.get("ai_recommendations", {}).get("auto_fill", {}).get("form_fields", {}).items()
+                        if k in ["experience", "company_name", "salary_ctc", "salary_increment"] and v
+                    },
+                    "program_interest": {
+                        k: v for k, v in result.get("ai_recommendations", {}).get("auto_fill", {}).get("form_fields", {}).items()
+                        if k in ["budget_range", "pain_points"] and v
+                    },
+                    "remarks": result.get("ai_recommendations", {}).get("auto_fill", {}).get("remarks", {})
+                }
+            }
+            
+            # Remove empty sections
+            response["extracted_information"] = {
+                k: v for k, v in response["extracted_information"].items() if v
+            }
+            
+            return response
             
         except HTTPException:
             raise
@@ -215,7 +267,60 @@ async def analyze_audio_url(request: AnalyzeURLRequest):
             raise HTTPException(status_code=502, detail="Analysis failed")
         
         logger.info("Analysis complete")
-        return {"status": "success", "data": result, "lead_id": request.lead_id}
+        
+        # Format response in a clean, readable structure
+        response = {
+            "status": "success",
+            "lead_id": request.lead_id,
+            "call_analysis": {
+                "disposition": result.get("disposition"),
+                "interest_level": result.get("interest_level"),
+                "sentiment": result.get("sentiment"),
+                "sentiment_score": result.get("sentiment_score"),
+                "summary": result.get("summary")
+            },
+            "conversation": {
+                "transcript": result.get("transcript", [])
+            },
+            "recommendations": {
+                "stage": {
+                    "current": result.get("ai_recommendations", {}).get("stage_update", {}).get("current_stage", ""),
+                    "recommended": result.get("ai_recommendations", {}).get("stage_update", {}).get("recommended_stage", ""),
+                    "sub_stage": result.get("ai_recommendations", {}).get("stage_update", {}).get("recommended_sub_stage", "")
+                },
+                "follow_up": result.get("ai_recommendations", {}).get("follow_up", {}),
+            },
+            "extracted_information": {
+                "contact": {
+                    k: v for k, v in result.get("ai_recommendations", {}).get("auto_fill", {}).get("form_fields", {}).items()
+                    if k in ["phone", "mobile_number", "alternate_mobile_number", "email", "alternate_email"] and v
+                },
+                "personal": {
+                    k: v for k, v in result.get("ai_recommendations", {}).get("auto_fill", {}).get("form_fields", {}).items()
+                    if k in ["city", "first_line_add", "best_time_to_call"] and v
+                },
+                "education": {
+                    k: v for k, v in result.get("ai_recommendations", {}).get("auto_fill", {}).get("form_fields", {}).items()
+                    if k in ["qualification", "degree", "field_of_study", "institute_school", "course"] and v
+                },
+                "professional": {
+                    k: v for k, v in result.get("ai_recommendations", {}).get("auto_fill", {}).get("form_fields", {}).items()
+                    if k in ["experience", "company_name", "salary_ctc", "salary_increment"] and v
+                },
+                "program_interest": {
+                    k: v for k, v in result.get("ai_recommendations", {}).get("auto_fill", {}).get("form_fields", {}).items()
+                    if k in ["budget_range", "pain_points"] and v
+                },
+                "remarks": result.get("ai_recommendations", {}).get("auto_fill", {}).get("remarks", {})
+            }
+        }
+        
+        # Remove empty sections
+        response["extracted_information"] = {
+            k: v for k, v in response["extracted_information"].items() if v
+        }
+        
+        return response
         
     except HTTPException:
         raise
