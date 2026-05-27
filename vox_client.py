@@ -234,19 +234,12 @@ def transcribe_recording(recording_url: str) -> str | None:
             
             # 1. Download
             logger.info(f"Downloading recording: {recording_url}")
-            
-            # Handle file:// URLs for local files
-            if recording_url.startswith("file://"):
-                local_path = recording_url[7:]  # Remove file:// prefix
-                import shutil
-                shutil.copy(local_path, raw_path)
-            else:
-                resp = requests.get(recording_url, stream=True, timeout=60)
-                resp.raise_for_status()
-                with open(raw_path, "wb") as f:
-                    for chunk in resp.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
+            resp = requests.get(recording_url, stream=True, timeout=60)
+            resp.raise_for_status()
+            with open(raw_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
             
             # 2. Enhance via FFmpeg
             filters = (
@@ -263,16 +256,23 @@ def transcribe_recording(recording_url: str) -> str | None:
                 logger.error(f"FFmpeg failed: {proc.stderr[:300]}")
                 return None
             
-            # 3. Transcribe via gpt-4o-transcribe (or whisper-1 fallback)
+            # 3. Transcribe via OpenAI audio.transcriptions
             stt_model = os.getenv("WHISPER_MODEL", "gpt-4o-transcribe")
             logger.info("Transcribing via OpenAI %s...", stt_model)
-            # prompt biases toward domain vocabulary and reduces hallucination on
-            # low-quality audio. No `language` param so the model auto-detects
-            # per-segment — correct for Hindi/English code-switched calls.
+            # prompt steers the model toward domain vocabulary and reduces hallucination
+            # on low-quality audio. No `language` param so the model auto-detects
+            # per-segment — this correctly handles Hindi/English code-switching.
             stt_prompt = (
                 "Sales call between a university admissions counselor and a prospective "
-                "student. Indian English, Hindi, or code-switched Hindi-English. Topics: "
-                "MBA, BBA, degree programs, fees, EMI, admission process, qualifications."
+                "student. The conversation may be in any Indian language (Hindi, Telugu, "
+                "Tamil, Kannada, Marathi, Bengali, Malayalam, Gujarati, Punjabi) or a "
+                "mix with English. "
+                "CRITICAL: Always write English words in English (Latin) script exactly "
+                "as spoken, even when they appear mid-sentence in another language. "
+                "Never translate or transliterate English words into any Indian script. "
+                "Transcribe each word in whichever language/script it was actually spoken. "
+                "Topics: MBA, BBA, B.Sc, M.Tech, fees, EMI, admission, qualifications, "
+                "university, online, distance learning."
             )
             with open(enhanced_path, "rb") as audio_file:
                 transcript = openai_client.audio.transcriptions.create(
