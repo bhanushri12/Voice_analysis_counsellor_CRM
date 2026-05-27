@@ -278,15 +278,19 @@ def transcribe_recording(recording_url: str) -> str | None:
             # prompt steers the model toward domain vocabulary and reduces hallucination
             # on low-quality audio. No `language` param so the model auto-detects
             # per-segment — this correctly handles Hindi/English code-switching.
+            # The prompt must begin with native-language text so gpt-4o-transcribe
+            # infers the correct output script instead of defaulting to English.
             stt_prompt = (
-                "Sales call between a university admissions counselor and a prospective "
-                "student. The conversation may be in any Indian language (Hindi, Telugu, "
-                "Tamil, Kannada, Marathi, Bengali, Malayalam, Gujarati, Punjabi) or a "
-                "mix with English. "
-                "CRITICAL: Always write English words in English (Latin) script exactly "
-                "as spoken, even when they appear mid-sentence in another language. "
-                "Never translate or transliterate English words into any Indian script. "
-                "Transcribe each word in whichever language/script it was actually spoken. "
+                # Hindi primer — steers the model toward native-script output
+                "यह एक भारतीय विश्वविद्यालय और छात्र के बीच की प्रवेश परामर्श कॉल है। "
+                "कृपया मूल भाषा में ही लिखें, अनुवाद न करें। "
+                # English instructions
+                "TRANSCRIBE IN THE ORIGINAL SPOKEN LANGUAGE — DO NOT TRANSLATE TO ENGLISH. "
+                "The call may be in Hindi, Telugu, Tamil, Kannada, Marathi, Bengali, "
+                "Malayalam, Gujarati, or Punjabi, often mixed with English. "
+                "Write Indian-language words in their native script (Devanagari, Telugu, "
+                "Tamil, Kannada, etc.). Write English words in English (Latin) script "
+                "exactly as spoken — never transliterate them into any Indian script. "
                 "Topics: MBA, BBA, B.Sc, M.Tech, fees, EMI, admission, qualifications, "
                 "university, online, distance learning."
             )
