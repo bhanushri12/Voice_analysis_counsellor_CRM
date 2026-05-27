@@ -177,13 +177,28 @@ TRANSCRIPT SPEAKER IDENTIFICATION:
 The raw input is a flat transcription of a TWO-party call merged into one stream with no speaker labels.
 Your job: split it into turns and assign each turn the correct role — "agent" or "user".
 
+⚠️ CRITICAL — NEVER output the entire conversation as a single turn. That is ALWAYS wrong.
+A real call has 6–40+ turns. If your transcript array has only 1 or 2 turns, you have failed to split.
+Every time the speaker changes, you MUST start a new {role, text} object.
+
+TURN SPLITTING RULES:
+- Short acknowledgements like "हाँ", "हाँ जी", "okay", "theek hai", "ठीक है", "अच्छा", "हलो", "नहीं"
+  spoken by the OTHER party are ALWAYS their own separate turn — do NOT merge them into the previous turn.
+- After the agent asks a question, the very next words are always a USER turn (even if short).
+- After the user answers, any explanation, pitch, or follow-up is always an AGENT turn.
+- If one party speaks for a long time on one topic, keep it as one turn. But the moment the
+  other party interjects (even a single word), start a new turn for them.
+
 HARD RULES:
 - Determine who speaks first from context:
   • Outgoing call: the AGENT speaks first — greets and introduces themselves/university.
   • Incoming call: the USER speaks first with a bare greeting ("Hello?", "Haan?", "Ji?") and the AGENT's FIRST substantive turn introduces themselves/university.
-- Roles strictly alternate unless one party delivers a long monologue — in that case split only at a clear topic/sentence boundary.
 - Every question must be followed by an answer from the OTHER party; do not assign two consecutive questions to the same role.
 - Coherence check: if a turn starts with a direct answer to the previous turn's question, it must be the opposite role.
+
+HINDI / HINGLISH TURN-BOUNDARY SIGNALS:
+USER turn starts when you see: हाँ | हाँ जी | अच्छा | ठीक है | नहीं | हलो | okay | hmm | ji | एक सेकंड | देखते हैं | मैं समझ रहा हूँ
+AGENT turn starts when you see: तो | देखो | मैंने आपको | हमारे यहाँ | इस programme में | fee है | आपको apply करना होगा | मैं share कर देती/देता हूँ
 
 AGENT signals — assign "agent" when the turn:
 - Opens with a greeting and self-introduction: "Hello, am I speaking with...?", "Good morning/afternoon, this is [name] from [university]"
@@ -208,6 +223,7 @@ AMBIGUITY RESOLUTION (in order of priority):
 3. If still ambiguous, assign to whichever role has spoken less recently (maintains alternation).
 
 transcript: Array of {role, text} turns. role must be exactly "agent" or "user".
+A valid transcript for a 2-minute call has at least 6 turns. Fewer than 4 turns means you did not split properly.
 """
 
 _env_prompt = os.getenv("ANALYSIS_SYSTEM_PROMPT", "")
@@ -309,19 +325,49 @@ def analyze_transcript(transcript: str) -> dict | None:
     try:
         gpt_model = os.getenv("ANALYSIS_MODEL", "gpt-4o-mini")
         today_ist = datetime.now(_IST).strftime("%Y-%m-%d")
-        
+        user_message = f"[Today's date (IST): {today_ist}]\n\n{transcript}"
+
+        def _parse(temperature: float) -> "AnalysisData":
+            return openai_client.beta.chat.completions.parse(
+                model=gpt_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user",   "content": user_message},
+                ],
+                response_format=AnalysisData,
+                temperature=temperature,
+            ).choices[0].message.parsed
+
         logger.info("Extracting CRM intelligence via GPT...")
-        completion = openai_client.beta.chat.completions.parse(
-            model=gpt_model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user",   "content": f"[Today's date (IST): {today_ist}]\n\n{transcript}"},
-            ],
-            response_format=AnalysisData,
-            temperature=0.0,
-        )
-        
-        result = completion.choices[0].message.parsed.model_dump()
+        parsed = _parse(temperature=0.0)
+
+        # If GPT collapsed the whole conversation into ≤2 turns, retry with a
+        # stronger split instruction so the dialog is properly separated.
+        if len(parsed.transcript) <= 2:
+            logger.warning(
+                "Transcript has only %d turn(s) — retrying with forced split prompt",
+                len(parsed.transcript),
+            )
+            split_suffix = (
+                "\n\n⚠️ IMPORTANT: Your previous response returned the entire conversation "
+                "as a single turn. That is incorrect. You MUST split the transcript into "
+                "individual agent/user turns. Every speaker change = a new turn. "
+                "A 2-minute call should have at least 6–10 turns. Re-analyse and split properly."
+            )
+            parsed = openai_client.beta.chat.completions.parse(
+                model=gpt_model,
+                messages=[
+                    {"role": "system",    "content": SYSTEM_PROMPT},
+                    {"role": "user",      "content": user_message},
+                    {"role": "assistant", "content": parsed.model_dump_json()},
+                    {"role": "user",      "content": split_suffix},
+                ],
+                response_format=AnalysisData,
+                temperature=0.2,
+            ).choices[0].message.parsed
+            logger.info("Retry produced %d turns", len(parsed.transcript))
+
+        result = parsed.model_dump()
         score = result.get("sentiment_score", 0.5)
         result["sentiment"] = (
             "positive" if score >= 0.6 else
