@@ -174,11 +174,38 @@ funding_option, decision_timeline, preferred_intake, designation
 summary: Max 2-3 sentences capturing intent, interest, and outcome.
 
 TRANSCRIPT SPEAKER IDENTIFICATION:
-The raw input is a flat STT transcription with no speaker labels. Split it into alternating turns and assign roles using these rules:
-- role "agent": greets first, introduces themselves/university, asks questions about interest/qualification/experience, explains courses/fees/process, uses formal sales language
-- role "user": responds to questions, shares personal details, asks about fees/dates/eligibility, expresses interest or objection
-- Turns typically alternate; if one speaker has a long monologue split it only at clear topic/turn boundaries
-- If a sentence is ambiguous, assign based on which role would most naturally say it
+The raw input is a flat transcription of a TWO-party call merged into one stream with no speaker labels.
+Your job: split it into turns and assign each turn the correct role — "agent" or "user".
+
+HARD RULES:
+- Determine who speaks first from context:
+  • Outgoing call: the AGENT speaks first — greets and introduces themselves/university.
+  • Incoming call: the USER speaks first with a bare greeting ("Hello?", "Haan?", "Ji?") and the AGENT's FIRST substantive turn introduces themselves/university.
+- Roles strictly alternate unless one party delivers a long monologue — in that case split only at a clear topic/sentence boundary.
+- Every question must be followed by an answer from the OTHER party; do not assign two consecutive questions to the same role.
+- Coherence check: if a turn starts with a direct answer to the previous turn's question, it must be the opposite role.
+
+AGENT signals — assign "agent" when the turn:
+- Opens with a greeting and self-introduction: "Hello, am I speaking with...?", "Good morning/afternoon, this is [name] from [university]"
+- Mentions the institution or program by name: "I'm calling from Manipal / Amity / LPU / DY Patil..."
+- Asks structured qualification questions: "What is your current qualification?", "How many years of experience do you have?"
+- Explains course details, fees, batch dates, EMI options, or the admission process
+- Confirms or summarises: "So as I understand, you're interested in MBA...", "Let me share the application link"
+- Uses formal sales phrases: "The program offers...", "We have a scholarship of...", "The next batch starts..."
+- Proposes follow-up action: "I'll call you back on...", "Please check your WhatsApp for the link"
+
+USER signals — assign "user" when the turn:
+- Responds with short confirmations or acknowledgements: "Yes", "Okay", "Haan", "Theek hai", "I see", "Hmm"
+- Gives personal details: name, city, current job, qualification, years of experience, company name
+- Asks about cost, eligibility, or logistics: "What are the fees?", "Is it online?", "Can I pay in installments?"
+- Expresses hesitation or conditions: "Let me check with my family", "The fees are a bit high", "I'm busy right now"
+- States their availability or preference: "Call me after 6 PM", "I'm free on weekends"
+- Uses informal or colloquial language; may mix Hindi and English
+
+AMBIGUITY RESOLUTION (in order of priority):
+1. Apply coherence: a direct answer to the previous question → opposite role.
+2. Apply agent/user signals above.
+3. If still ambiguous, assign to whichever role has spoken less recently (maintains alternation).
 
 transcript: Array of {role, text} turns. role must be exactly "agent" or "user".
 """
@@ -236,13 +263,22 @@ def transcribe_recording(recording_url: str) -> str | None:
                 logger.error(f"FFmpeg failed: {proc.stderr[:300]}")
                 return None
             
-            # 3. Transcribe via Whisper
-            whisper_model = os.getenv("WHISPER_MODEL", "whisper-1")
-            logger.info("Transcribing via OpenAI Whisper...")
+            # 3. Transcribe via gpt-4o-transcribe (or whisper-1 fallback)
+            stt_model = os.getenv("WHISPER_MODEL", "gpt-4o-transcribe")
+            logger.info("Transcribing via OpenAI %s...", stt_model)
+            # prompt biases toward domain vocabulary and reduces hallucination on
+            # low-quality audio. No `language` param so the model auto-detects
+            # per-segment — correct for Hindi/English code-switched calls.
+            stt_prompt = (
+                "Sales call between a university admissions counselor and a prospective "
+                "student. Indian English, Hindi, or code-switched Hindi-English. Topics: "
+                "MBA, BBA, degree programs, fees, EMI, admission process, qualifications."
+            )
             with open(enhanced_path, "rb") as audio_file:
                 transcript = openai_client.audio.transcriptions.create(
-                    model=whisper_model,
+                    model=stt_model,
                     file=audio_file,
+                    prompt=stt_prompt,
                 ).text.strip()
             
             logger.info("Transcription complete (%d chars)", len(transcript))
