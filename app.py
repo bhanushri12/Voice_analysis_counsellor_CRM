@@ -2,7 +2,7 @@
 
 Version: 2.0 - Improved response formatting
 """
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import HTMLResponse
 import shutil
 import os
@@ -29,6 +29,7 @@ class AnalyzeURLRequest(BaseModel):
     """Request model for URL-based analysis."""
     recording_url: str
     lead_id: Optional[str] = None
+    language: Optional[str] = None  # BCP-47 code, e.g. "te", "hi", "ta"
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -128,7 +129,7 @@ def upload_page():
 
 
 @app.post("/analyze")
-async def analyze_audio_file(file: UploadFile = File(...)):
+async def analyze_audio_file(file: UploadFile = File(...), language: Optional[str] = Form(None)):
     """
     Analyze an uploaded audio file.
     
@@ -158,7 +159,7 @@ async def analyze_audio_file(file: UploadFile = File(...)):
             
             # Transcribe the audio
             logger.info("Starting transcription...")
-            transcript = transcribe_recording(f"file://{temp_path}")
+            transcript = transcribe_recording(f"file://{temp_path}", language=language)
             
             if transcript is None:
                 raise HTTPException(status_code=502, detail="Transcription failed")
@@ -264,7 +265,7 @@ async def analyze_audio_url(request: AnalyzeURLRequest):
     
     try:
         # Use the analyze_recording function which handles download + transcribe + analyze
-        result = analyze_recording(request.recording_url)
+        result = analyze_recording(request.recording_url, language=request.language)
         
         if result is None:
             raise HTTPException(status_code=502, detail="Analysis failed")

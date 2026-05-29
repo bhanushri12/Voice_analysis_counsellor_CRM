@@ -238,9 +238,17 @@ SYSTEM_PROMPT = _env_prompt.replace('\\n', '\n') if _env_prompt else _DEFAULT_PR
 
 # ── Public functions ─────────────────────────────────────────────────
 
-def transcribe_recording(recording_url: str) -> str | None:
+def transcribe_recording(recording_url: str, language: str | None = None) -> str | None:
     """Download, enhance via FFmpeg, and transcribe a recording with Whisper.
-    
+
+    Args:
+        recording_url: URL or file:// path to the audio file.
+        language: BCP-47 language code (e.g. "te", "hi", "ta"). When provided
+            it is passed directly to the transcription API so the model outputs
+            in the correct script instead of defaulting to English.  Leave None
+            to let the model auto-detect (acceptable for clearly Hindi calls;
+            unreliable for South-Indian languages).
+
     Returns the raw transcript string, or None on any failure.
     """
     api_key = os.getenv("OPENAI_API_KEY")
@@ -302,10 +310,15 @@ def transcribe_recording(recording_url: str) -> str | None:
                 "university, online, distance learning."
             )
             with open(enhanced_path, "rb") as audio_file:
-                transcript = openai_client.audio.transcriptions.create(
+                transcription_kwargs = dict(
                     model=stt_model,
                     file=audio_file,
                     prompt=stt_prompt,
+                )
+                if language:
+                    transcription_kwargs["language"] = language
+                transcript = openai_client.audio.transcriptions.create(
+                    **transcription_kwargs
                 ).text.strip()
             
             logger.info("Transcription complete (%d chars)", len(transcript))
@@ -398,13 +411,15 @@ def analyze_transcript(transcript: str) -> dict | None:
         return None
 
 
-def analyze_recording(recording_url: str) -> dict | None:
+def analyze_recording(recording_url: str, language: str | None = None) -> dict | None:
     """Download, enhance, transcribe, and analyze a call recording.
-    
+
+    Args:
+        language: BCP-47 code forwarded to transcribe_recording (e.g. "te", "hi").
     Returns the full AnalysisData dict, or None on any failure.
     """
-    transcript = transcribe_recording(recording_url)
+    transcript = transcribe_recording(recording_url, language=language)
     if transcript is None:
         return None
-    
+
     return analyze_transcript(transcript)
