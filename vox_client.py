@@ -265,12 +265,16 @@ def transcribe_recording(recording_url: str, language: str | None = None) -> str
             
             # 1. Download
             logger.info(f"Downloading recording: {recording_url}")
-            resp = requests.get(recording_url, stream=True, timeout=60)
-            resp.raise_for_status()
-            with open(raw_path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
+            if recording_url.startswith("file://"):
+                import shutil as _shutil
+                _shutil.copy(recording_url[7:], raw_path)
+            else:
+                resp = requests.get(recording_url, stream=True, timeout=60)
+                resp.raise_for_status()
+                with open(raw_path, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
             
             # 2. Enhance via FFmpeg
             filters = (
