@@ -54,7 +54,7 @@ class StageNameEnum(str, Enum):
 class TranscriptTurn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     role: str = Field(description="Speaker role: 'agent' or 'user'")
-    text: str = Field(description="What the speaker said")
+    text: str = Field(description="What the speaker said, preserved in the original spoken language. Hindi/regional words stay in native script; English words stay in English. Do NOT translate.")
 
 class FormFields(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -131,6 +131,13 @@ STRICT INSTRUCTIONS:
 - Use ONLY allowed values where specified
 - All dates and times are in IST (India Standard Time, UTC+5:30)
 - Today's date in IST is provided at the top of the transcript — use it as the reference when computing any relative follow-up dates (e.g. "next Monday", "call in 3 days")
+
+LANGUAGE PRESERVATION (CRITICAL):
+- The transcript array MUST be written in the ORIGINAL SPOKEN LANGUAGE — do NOT translate to English.
+- Hindi words → Devanagari script. Telugu → Telugu script. Tamil → Tamil script. etc.
+- English words that were spoken in English MUST remain in English (Latin script).
+- Code-switched sentences (Hinglish, Tenglish, etc.) must preserve both scripts exactly as spoken.
+- Only the summary, form_fields, and remarks should be written in English for CRM readability.
 
 FIELDS TO CLASSIFY:
 disposition: "interested" | "not interested" | "callback" | "invalid" | "not answered"
