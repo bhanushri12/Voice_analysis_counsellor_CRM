@@ -159,10 +159,13 @@ async def analyze_audio_file(file: UploadFile = File(...), language: Optional[st
             
             # Transcribe the audio
             logger.info("Starting transcription...")
-            transcript = transcribe_recording(f"file://{temp_path}", language=language)
-            
+            try:
+                transcript = transcribe_recording(f"file://{temp_path}", language=language)
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"Transcription failed: {type(exc).__name__}: {exc}")
+
             if transcript is None:
-                raise HTTPException(status_code=502, detail="Transcription failed")
+                raise HTTPException(status_code=502, detail="Transcription returned empty")
             
             logger.info(f"Transcription complete: {len(transcript)} characters")
             
@@ -265,10 +268,13 @@ async def analyze_audio_url(request: AnalyzeURLRequest):
     
     try:
         # Use the analyze_recording function which handles download + transcribe + analyze
-        result = analyze_recording(request.recording_url, language=request.language)
-        
+        try:
+            result = analyze_recording(request.recording_url, language=request.language)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Analysis failed: {type(exc).__name__}: {exc}")
+
         if result is None:
-            raise HTTPException(status_code=502, detail="Analysis failed")
+            raise HTTPException(status_code=502, detail="Analysis returned empty")
         
         logger.info("Analysis complete")
         

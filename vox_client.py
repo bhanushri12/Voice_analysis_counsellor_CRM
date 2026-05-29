@@ -345,11 +345,14 @@ def transcribe_recording(recording_url: str, language: str | None = None) -> str
     
     except FileNotFoundError:
         logger.error("ffmpeg not found — install ffmpeg on the server")
+        raise
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to download recording: {e}")
+        raise
     except Exception as exc:
-        logger.error(f"Transcription failed: {exc}")
-    
+        logger.error(f"Transcription failed: {type(exc).__name__}: {exc}", exc_info=True)
+        raise
+
     return None
 
 
