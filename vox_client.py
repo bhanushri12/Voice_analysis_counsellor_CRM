@@ -3,8 +3,11 @@
 analyze_recording(url) is the single public function:
 1. Downloads the audio file
 2. Enhances it via FFmpeg (normalize, compress, mono 16 kHz WAV)
-3. Transcribes via OpenAI Whisper
+3. Transcribes via Sarvam AI (preferred) or OpenAI Whisper (fallback)
 4. Extracts structured CRM intelligence via GPT-4o Structured Outputs
+
+Set SARVAM_API_KEY to use Sarvam (better Indian language detection).
+Falls back to OpenAI Whisper if SARVAM_API_KEY is not set.
 
 Returns the full analysis dict on success, None on any failure.
 """
@@ -17,6 +20,13 @@ from datetime import datetime, timezone, timedelta
 from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field
 from openai import OpenAI
+
+# Sarvam language code map: BCP-47 short code → Sarvam locale
+_SARVAM_LANG = {
+    "te": "te-IN", "hi": "hi-IN", "kn": "kn-IN", "ta": "ta-IN",
+    "ml": "ml-IN", "mr": "mr-IN", "bn": "bn-IN", "gu": "gu-IN",
+    "pa": "pa-IN", "en": "en-IN",
+}
 
 _IST = timezone(timedelta(hours=5, minutes=30))
 logger = logging.getLogger("VoxClient")
@@ -291,36 +301,46 @@ def transcribe_recording(recording_url: str, language: str | None = None) -> str
                 logger.error(f"FFmpeg failed: {proc.stderr[:300]}")
                 return None
             
-            # 3. Transcribe via OpenAI audio.transcriptions
-            stt_model = os.getenv("WHISPER_MODEL", "gpt-4o-transcribe")
-            logger.info("Transcribing via OpenAI %s...", stt_model)
-            # Domain vocabulary prompt — no native-script primer so the model
-            # auto-detects language from the audio rather than from the prompt text.
-            # (A Hindi/Devanagari primer caused Telugu audio to be mis-detected as Marathi.)
-            stt_prompt = (
-                "This is an Indian university admissions counselling call. "
-                "TRANSCRIBE IN THE ORIGINAL SPOKEN LANGUAGE — DO NOT TRANSLATE TO ENGLISH. "
-                "The call may be in Telugu, Hindi, Tamil, Kannada, Marathi, Bengali, "
-                "Malayalam, Gujarati, or Punjabi, often mixed with English. "
-                "Write Indian-language words in their native script (Telugu: తెలుగు, "
-                "Devanagari: हिंदी/मराठी, Tamil: தமிழ், Kannada: ಕನ್ನಡ, etc.). "
-                "Write English words in English (Latin) script exactly as spoken. "
-                "Topics: MBA, BBA, B.Sc, M.Tech, fees, EMI, admission, qualifications, "
-                "university, online, distance learning."
-            )
-            with open(enhanced_path, "rb") as audio_file:
-                transcription_kwargs = dict(
-                    model=stt_model,
-                    file=audio_file,
-                    prompt=stt_prompt,
+            # 3. Transcribe — Sarvam AI preferred, OpenAI Whisper as fallback
+            sarvam_key = os.getenv("SARVAM_API_KEY")
+            if sarvam_key:
+                from sarvamai import SarvamAI
+                sarvam_client = SarvamAI(api_subscription_key=sarvam_key)
+                sarvam_lang = _SARVAM_LANG.get(language, "unknown") if language else "unknown"
+                logger.info("Transcribing via Sarvam AI saaras:v3 (language_code=%s)...", sarvam_lang)
+                with open(enhanced_path, "rb") as audio_file:
+                    resp = sarvam_client.speech_to_text.transcribe(
+                        file=audio_file,
+                        model="saaras:v3",
+                        mode="transcribe",
+                        language_code=sarvam_lang,
+                    )
+                transcript = (resp.transcript or "").strip()
+                logger.info(
+                    "Sarvam transcription complete — detected=%s, confidence=%.2f, chars=%d",
+                    resp.language_code, resp.language_probability or 0, len(transcript),
                 )
-                if language:
-                    transcription_kwargs["language"] = language
-                transcript = openai_client.audio.transcriptions.create(
-                    **transcription_kwargs
-                ).text.strip()
-            
-            logger.info("Transcription complete (%d chars)", len(transcript))
+            else:
+                stt_model = os.getenv("WHISPER_MODEL", "gpt-4o-transcribe")
+                logger.info("Transcribing via OpenAI %s (no SARVAM_API_KEY set)...", stt_model)
+                stt_prompt = (
+                    "This is an Indian university admissions counselling call. "
+                    "TRANSCRIBE IN THE ORIGINAL SPOKEN LANGUAGE — DO NOT TRANSLATE TO ENGLISH. "
+                    "The call may be in Telugu, Hindi, Tamil, Kannada, Marathi, Bengali, "
+                    "Malayalam, Gujarati, or Punjabi, often mixed with English. "
+                    "Write Indian-language words in their native script (Telugu: తెలుగు, "
+                    "Devanagari: हिंदी/मराठी, Tamil: தமிழ், Kannada: ಕನ್ನಡ, etc.). "
+                    "Write English words in English (Latin) script exactly as spoken. "
+                    "Topics: MBA, BBA, B.Sc, M.Tech, fees, EMI, admission, qualifications, "
+                    "university, online, distance learning."
+                )
+                with open(enhanced_path, "rb") as audio_file:
+                    kwargs = dict(model=stt_model, file=audio_file, prompt=stt_prompt)
+                    if language:
+                        kwargs["language"] = language
+                    transcript = openai_client.audio.transcriptions.create(**kwargs).text.strip()
+                logger.info("OpenAI transcription complete (%d chars)", len(transcript))
+
             return transcript
     
     except FileNotFoundError:
