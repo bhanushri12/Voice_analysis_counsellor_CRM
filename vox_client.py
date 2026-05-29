@@ -294,22 +294,17 @@ def transcribe_recording(recording_url: str, language: str | None = None) -> str
             # 3. Transcribe via OpenAI audio.transcriptions
             stt_model = os.getenv("WHISPER_MODEL", "gpt-4o-transcribe")
             logger.info("Transcribing via OpenAI %s...", stt_model)
-            # prompt steers the model toward domain vocabulary and reduces hallucination
-            # on low-quality audio. No `language` param so the model auto-detects
-            # per-segment — this correctly handles Hindi/English code-switching.
-            # The prompt must begin with native-language text so gpt-4o-transcribe
-            # infers the correct output script instead of defaulting to English.
+            # Domain vocabulary prompt — no native-script primer so the model
+            # auto-detects language from the audio rather than from the prompt text.
+            # (A Hindi/Devanagari primer caused Telugu audio to be mis-detected as Marathi.)
             stt_prompt = (
-                # Hindi primer — steers the model toward native-script output
-                "यह एक भारतीय विश्वविद्यालय और छात्र के बीच की प्रवेश परामर्श कॉल है। "
-                "कृपया मूल भाषा में ही लिखें, अनुवाद न करें। "
-                # English instructions
+                "This is an Indian university admissions counselling call. "
                 "TRANSCRIBE IN THE ORIGINAL SPOKEN LANGUAGE — DO NOT TRANSLATE TO ENGLISH. "
-                "The call may be in Hindi, Telugu, Tamil, Kannada, Marathi, Bengali, "
+                "The call may be in Telugu, Hindi, Tamil, Kannada, Marathi, Bengali, "
                 "Malayalam, Gujarati, or Punjabi, often mixed with English. "
-                "Write Indian-language words in their native script (Devanagari, Telugu, "
-                "Tamil, Kannada, etc.). Write English words in English (Latin) script "
-                "exactly as spoken — never transliterate them into any Indian script. "
+                "Write Indian-language words in their native script (Telugu: తెలుగు, "
+                "Devanagari: हिंदी/मराठी, Tamil: தமிழ், Kannada: ಕನ್ನಡ, etc.). "
+                "Write English words in English (Latin) script exactly as spoken. "
                 "Topics: MBA, BBA, B.Sc, M.Tech, fees, EMI, admission, qualifications, "
                 "university, online, distance learning."
             )
