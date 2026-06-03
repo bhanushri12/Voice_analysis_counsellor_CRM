@@ -8,6 +8,8 @@ services:
     envVars:
       - key: OPENAI_API_KEY
         sync: false
+      - key: SARVAM_API_KEY
+        sync: false
       - key: WHISPER_MODEL
         value: whisper-1
       - key: ANALYSIS_MODEL

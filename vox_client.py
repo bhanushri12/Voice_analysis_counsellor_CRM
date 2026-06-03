@@ -3,16 +3,16 @@
 analyze_recording(url) is the single public function:
 1. Downloads the audio file
 2. Enhances it via FFmpeg (normalize, compress, mono 16 kHz WAV)
-3. Transcribes via Sarvam AI (preferred) or OpenAI Whisper (fallback)
+3. Transcribes via Sarvam AI saaras:v3 batch API (requires SARVAM_API_KEY)
 4. Extracts structured CRM intelligence via GPT-4o Structured Outputs
 
-Set SARVAM_API_KEY to use Sarvam (better Indian language detection).
-Falls back to OpenAI Whisper if SARVAM_API_KEY is not set.
+Requires SARVAM_API_KEY for transcription and OPENAI_API_KEY for CRM analysis.
 
 Returns the full analysis dict on success, None on any failure.
 """
-import os
+import json as _json
 import logging
+import os
 import subprocess
 import tempfile
 import requests
@@ -249,32 +249,26 @@ SYSTEM_PROMPT = _env_prompt.replace('\\n', '\n') if _env_prompt else _DEFAULT_PR
 # ── Public functions ─────────────────────────────────────────────────
 
 def transcribe_recording(recording_url: str, language: str | None = None) -> str | None:
-    """Download, enhance via FFmpeg, and transcribe a recording with Whisper.
+    """Download, enhance via FFmpeg, and transcribe via Sarvam AI saaras:v3 batch API.
 
-    Args:
-        recording_url: URL or file:// path to the audio file.
-        language: BCP-47 language code (e.g. "te", "hi", "ta"). When provided
-            it is passed directly to the transcription API so the model outputs
-            in the correct script instead of defaulting to English.  Leave None
-            to let the model auto-detect (acceptable for clearly Hindi calls;
-            unreliable for South-Indian languages).
+    Handles audio of any length (up to 1 hour per file). Language is forwarded
+    to Sarvam when provided; otherwise auto-detected.
 
-    Returns the raw transcript string, or None on any failure.
+    Returns the raw transcript string, or raises on any failure.
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        logger.warning("OPENAI_API_KEY not set — skipping transcription")
+    sarvam_key = os.getenv("SARVAM_API_KEY")
+    if not sarvam_key:
+        logger.warning("SARVAM_API_KEY not set — cannot transcribe")
         return None
-    
-    openai_client = OpenAI(api_key=api_key)
-    
+
     try:
         with tempfile.TemporaryDirectory() as tmp:
             raw_path      = os.path.join(tmp, "raw.tmp")
             enhanced_path = os.path.join(tmp, "enhanced.wav")
-            
+            output_dir    = os.path.join(tmp, "output")
+
             # 1. Download
-            logger.info(f"Downloading recording: {recording_url}")
+            logger.info("Downloading recording: %s", recording_url)
             if recording_url.startswith("file://"):
                 import shutil as _shutil
                 _shutil.copy(recording_url[7:], raw_path)
@@ -285,7 +279,7 @@ def transcribe_recording(recording_url: str, language: str | None = None) -> str
                     for chunk in resp.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
-            
+
             # 2. Enhance via FFmpeg
             filters = (
                 "loudnorm=I=-16:TP=-1.5:LRA=11,"
@@ -298,76 +292,81 @@ def transcribe_recording(recording_url: str, language: str | None = None) -> str
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
             if proc.returncode != 0:
-                logger.error(f"FFmpeg failed: {proc.stderr[:300]}")
+                logger.error("FFmpeg failed: %s", proc.stderr[:300])
                 return None
-            
-            # 3. Transcribe — Sarvam AI preferred, OpenAI Whisper as fallback
-            sarvam_key = os.getenv("SARVAM_API_KEY")
-            if sarvam_key:
-                from sarvamai import SarvamAI
-                sarvam_client = SarvamAI(api_subscription_key=sarvam_key)
-                sarvam_lang = _SARVAM_LANG.get(language, "unknown") if language else "unknown"
-                logger.info("Transcribing via Sarvam AI saaras:v3 (language_code=%s)...", sarvam_lang)
-                with open(enhanced_path, "rb") as audio_file:
-                    resp = sarvam_client.speech_to_text.transcribe(
-                        file=audio_file,
-                        model="saaras:v3",
-                        mode="transcribe",
-                        language_code=sarvam_lang,
-                    )
-                transcript = (resp.transcript or "").strip()
-                logger.info(
-                    "Sarvam transcription complete — detected=%s, confidence=%.2f, chars=%d",
-                    resp.language_code, resp.language_probability or 0, len(transcript),
-                )
-            else:
-                stt_model = os.getenv("WHISPER_MODEL", "gpt-4o-transcribe")
-                logger.info("Transcribing via OpenAI %s (no SARVAM_API_KEY set)...", stt_model)
-                stt_prompt = (
-                    "This is an Indian university admissions counselling call. "
-                    "TRANSCRIBE IN THE ORIGINAL SPOKEN LANGUAGE — DO NOT TRANSLATE TO ENGLISH. "
-                    "The call may be in Telugu, Hindi, Tamil, Kannada, Marathi, Bengali, "
-                    "Malayalam, Gujarati, or Punjabi, often mixed with English. "
-                    "Write Indian-language words in their native script (Telugu: తెలుగు, "
-                    "Devanagari: हिंदी/मराठी, Tamil: தமிழ், Kannada: ಕನ್ನಡ, etc.). "
-                    "Write English words in English (Latin) script exactly as spoken. "
-                    "Topics: MBA, BBA, B.Sc, M.Tech, fees, EMI, admission, qualifications, "
-                    "university, online, distance learning."
-                )
-                with open(enhanced_path, "rb") as audio_file:
-                    kwargs = dict(model=stt_model, file=audio_file, prompt=stt_prompt)
-                    if language:
-                        kwargs["language"] = language
-                    transcript = openai_client.audio.transcriptions.create(**kwargs).text.strip()
-                logger.info("OpenAI transcription complete (%d chars)", len(transcript))
 
-            return transcript
-    
+            # 3. Transcribe via Sarvam AI saaras:v3 batch API
+            from sarvamai import SarvamAI
+            sarvam_client = SarvamAI(api_subscription_key=sarvam_key)
+
+            sarvam_lang = _SARVAM_LANG.get(language) if language else None
+            logger.info(
+                "Submitting batch job to Sarvam AI saaras:v3 (language_code=%s)...",
+                sarvam_lang or "auto",
+            )
+            job = sarvam_client.speech_to_text_job.create_job(
+                model="saaras:v3",
+                mode="transcribe",
+                language_code=sarvam_lang,
+            )
+            job.upload_files(file_paths=[enhanced_path], timeout=300.0)
+            job.start()
+
+            logger.info("Waiting for Sarvam batch job %s to complete...", job.job_id)
+            status = job.wait_until_complete(poll_interval=3, timeout=600)
+            logger.info("Batch job state: %s", status.job_state)
+
+            if status.job_state.lower() != "completed":
+                raise RuntimeError(
+                    f"Sarvam batch job {job.job_id} ended with state: {status.job_state}"
+                )
+
+            job.download_outputs(output_dir)
+
+            # Parse transcript from the downloaded JSON output.
+            # SDK saves each file as {input_filename}.json (e.g. enhanced.wav.json).
+            # Top-level "transcript" key holds the flat transcript string.
+            parts = []
+            for fname in sorted(os.listdir(output_dir)):
+                if not fname.endswith(".json"):
+                    continue
+                with open(os.path.join(output_dir, fname)) as f:
+                    data = _json.load(f)
+                t = (data.get("transcript") or "").strip()
+                if t:
+                    parts.append(t)
+                    logger.info(
+                        "Batch result file=%s detected_lang=%s chars=%d",
+                        fname, data.get("language_code", ""), len(t),
+                    )
+
+            transcript = " ".join(parts).strip()
+            logger.info("Sarvam transcription complete — total chars=%d", len(transcript))
+            return transcript if transcript else None
+
     except FileNotFoundError:
         logger.error("ffmpeg not found — install ffmpeg on the server")
         raise
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to download recording: {e}")
+        logger.error("Failed to download recording: %s", e)
         raise
     except Exception as exc:
-        logger.error(f"Transcription failed: {type(exc).__name__}: {exc}", exc_info=True)
+        logger.error("Transcription failed: %s: %s", type(exc).__name__, exc, exc_info=True)
         raise
-
-    return None
 
 
 def analyze_transcript(transcript: str) -> dict | None:
     """Run GPT Structured Outputs on a raw transcript string.
-    
+
     Returns the full AnalysisData dict, or None on any failure.
     """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         logger.warning("OPENAI_API_KEY not set — skipping analysis")
         return None
-    
+
     openai_client = OpenAI(api_key=api_key)
-    
+
     try:
         gpt_model = os.getenv("ANALYSIS_MODEL", "gpt-4o-mini")
         today_ist = datetime.now(_IST).strftime("%Y-%m-%d")
@@ -420,16 +419,16 @@ def analyze_transcript(transcript: str) -> dict | None:
             "negative" if score <= 0.4 else
             "neutral"
         )
-        
+
         logger.info(
             "Analysis complete — disposition=%s, interest_level=%s, sentiment=%s (%.2f)",
             result.get("disposition"), result.get("interest_level"),
             result.get("sentiment"), score,
         )
         return result
-    
+
     except Exception as exc:
-        logger.error(f"GPT analysis failed: {exc}")
+        logger.error("GPT analysis failed: %s", exc)
         return None
 
 
